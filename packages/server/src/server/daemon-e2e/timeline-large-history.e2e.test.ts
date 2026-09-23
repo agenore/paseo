@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -94,5 +94,62 @@ describe("daemon E2E - large agent history (#2610)", () => {
 
     expect(page.error).toBeNull();
     expect(page.entries.length).toBeGreaterThan(0);
+  }, 300_000);
+
+  test("opens an agent cold-loaded from a provider history of more than 64 MiB", async () => {
+    const agent = await ctx.client.createAgent({
+      provider: "codex",
+      cwd,
+      title: "Cold load",
+    });
+    await ctx.client.sendMessage(agent.id, "Respond with exactly: READY");
+    const finished = await ctx.client.waitForFinish(agent.id, 5_000);
+    const handle = finished.final!.persistence as PersistenceHandle;
+    const historyPath = path.join(
+      tmpdir(),
+      "paseo-fake-provider-history",
+      "codex",
+      `${handle.sessionId}.jsonl`
+    );
+    const body = "x".repeat(4_000);
+    const lines: string[] = [];
+    for (let index = 0; index < 20_000; index += 1) {
+      lines.push(
+        JSON.stringify({ type: "turn_started", provider: "codex" }),
+        JSON.stringify({
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: `question ${index}` },
+        }),
+        JSON.stringify({
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: `${index} ${body}` },
+        }),
+        JSON.stringify({
+          type: "turn_completed",
+          provider: "codex",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        })
+      );
+    }
+    appendFileSync(historyPath, lines.join("\n") + "\n");
+
+    await ctx.cleanup();
+    ctx = await createDaemonTestContext();
+    const resumed = await ctx.client.resumeAgent(handle);
+
+    const page = await ctx.client.fetchAgentTimeline(resumed.id, {
+      direction: "tail",
+      limit: APP_PAGE_SIZE,
+      projection: "projected",
+      timeout: 60_000,
+    });
+
+    expect(page.error).toBeNull();
+    expect(page.entries).toHaveLength(APP_PAGE_SIZE);
+    expect(page.entries.at(-1)?.item).toMatchObject({
+      type: "assistant_message",
+    });
   }, 300_000);
 });
