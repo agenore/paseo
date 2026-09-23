@@ -479,7 +479,7 @@ export function readPersistedConfig(
 
 /** Editors such as Windows Notepad save UTF-8 with a byte order mark, which JSON.parse rejects. */
 function parseConfigText(raw: string): unknown {
-  return JSON.parse(raw.startsWith("\uFEFF") ? raw.slice(1) : raw);
+  return JSON.parse(raw.replace(/^\uFEFF/, ""));
 }
 
 function configPathParts(field: string): string[] {
