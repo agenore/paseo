@@ -6,6 +6,7 @@ import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderParams } from "./provider-config.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+import { JsonlRpcRequestRejectedError } from "../jsonl-rpc-process.js";
 
 test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
   expect(resolveOmpProviderParams({}).runtimeProviderParams).toMatchObject({
@@ -774,12 +775,48 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
-  test("a prompt that never reaches OMP leaves no correlation for a later submission", async () => {
+  test("a timed-out prompt OMP echoes late keeps its own correlation when the same text is resubmitted", async () => {
     const omp = new OmpHarness();
     await omp.start();
 
     const runtime = omp.runtime();
-    runtime.promptError = new Error("OMP prompt dispatch failed");
+    // OMP recorded the prompt, but Paseo's request timed out before it was answered.
+    runtime.promptError = new Error("OMP prompt request timed out");
+    await omp.requireStartTurnFromClient("retry me", "client-a");
+    await omp.waitForEvent("turn_failed");
+    runtime.promptError = null;
+
+    await omp.requireStartTurnFromClient("retry me", "client-b");
+    // OMP echoes both prompts in the order it received them.
+    runtime.beginTurn();
+    runtime.acceptPrompt("retry me", "omp-user-a");
+    runtime.acceptPrompt("retry me", "omp-user-b");
+    runtime.streamAssistantText("done", "omp-assistant-b");
+    runtime.finishTurn();
+    await omp.waitForUserMessages(2);
+
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "retry me",
+        messageId: "omp-user-a",
+        clientMessageId: "client-a",
+      },
+      {
+        type: "user_message",
+        text: "retry me",
+        messageId: "omp-user-b",
+        clientMessageId: "client-b",
+      },
+    ]);
+  });
+
+  test("a prompt OMP rejects leaves no correlation for a later submission", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const runtime = omp.runtime();
+    runtime.promptError = new JsonlRpcRequestRejectedError("OMP refused the prompt");
     await omp.requireStartTurnFromClient("retry me", "client-a");
     await omp.waitForEvent("turn_failed");
     runtime.promptError = null;

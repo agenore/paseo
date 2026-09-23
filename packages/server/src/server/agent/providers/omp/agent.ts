@@ -72,6 +72,7 @@ import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
+import { JsonlRpcRequestRejectedError } from "../jsonl-rpc-process.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
 import type {
@@ -999,6 +1000,11 @@ export class OmpAgentSession implements AgentSession {
           return;
         }
       } catch (error) {
+        if (error instanceof JsonlRpcRequestRejectedError) {
+          // OMP refused the prompt, so no echo will ever claim it. Any other
+          // failure (a timeout) leaves the prompt with OMP, which still echoes it.
+          this.forgetClientCorrelation(options?.clientMessageId);
+        }
         if (this.activeTurnId !== turnId) {
           return;
         }
@@ -1305,13 +1311,20 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  // Paseo runs one foreground turn at a time, so two unclaimed correlations with
-  // the same text mean the older prompt's turn ended without an echo (a failed
-  // or timed-out dispatch). The newest one belongs to the submission OMP is
-  // echoing now; the older one stays queued in case OMP echoes it late, and
-  // falls off the bounded queue otherwise.
+  private forgetClientCorrelation(clientMessageId: string | undefined): void {
+    const index = this.pendingClientCorrelations.findIndex(
+      (entry) => entry.clientMessageId === clientMessageId,
+    );
+    if (index !== -1) {
+      this.pendingClientCorrelations.splice(index, 1);
+    }
+  }
+
+  // OMP echoes prompts in the order Paseo sent them, and a prompt OMP refused
+  // is forgotten on dispatch, so the oldest unclaimed correlation with the
+  // echoed text belongs to this echo.
   private takeClientCorrelation(text: string): string | null {
-    const index = this.pendingClientCorrelations.findLastIndex((entry) => entry.text === text);
+    const index = this.pendingClientCorrelations.findIndex((entry) => entry.text === text);
     if (index === -1) {
       return null;
     }
