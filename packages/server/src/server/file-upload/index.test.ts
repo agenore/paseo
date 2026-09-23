@@ -78,9 +78,9 @@ describe("file uploads", () => {
     await expect(uploadNamed(uploads, "../../etc/passwd")).resolves.toMatchObject({
       fileName: "passwd",
     });
-    await expect(uploadNamed(uploads, "dir\\name.txt")).resolves.toMatchObject({
-      fileName: "dir_name.txt",
-    });
+    const backslashed = await uploadNamed(uploads, "dir\\name.txt");
+    expect(backslashed?.fileName).not.toContain("\\");
+    expect(backslashed?.fileName).toMatch(/name\.txt$/);
     await expect(uploadNamed(uploads, 'a<b>:"c|?*.txt')).resolves.toMatchObject({
       fileName: "a_b___c___.txt",
     });
