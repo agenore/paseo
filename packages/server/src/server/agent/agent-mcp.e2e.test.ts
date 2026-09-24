@@ -281,10 +281,20 @@ describe("agent MCP end-to-end (offline)", () => {
         regularFile: regularFile.isError ?? false,
         directory: directory.isError ?? false,
       }).toEqual({ missing: true, regularFile: true, directory: false });
-      expect(JSON.stringify(missing.content)).toContain(`Directory not found: ${missingPath}`);
-      expect(JSON.stringify(regularFile.content)).toContain(`Directory not found: ${filePath}`);
-      const workspaces = getStructuredContent(listed)?.workspaces as Array<{ cwd: string }>;
-      expect(workspaces.map((workspace) => workspace.cwd)).toEqual([root]);
+      expect(missing.content).toEqual([
+        expect.objectContaining({
+          text: expect.stringContaining(`Directory not found: ${missingPath}`),
+        }),
+      ]);
+      expect(regularFile.content).toEqual([
+        expect.objectContaining({
+          text: expect.stringContaining(`Directory not found: ${filePath}`),
+        }),
+      ]);
+      const workspaces = getStructuredContent(listed)?.workspaces as Array<{ workspaceId: string }>;
+      expect(workspaces.map((workspace) => workspace.workspaceId)).toEqual([
+        getStructuredContent(directory)?.workspaceId,
+      ]);
     } finally {
       await client.close();
       await daemon.stop();
