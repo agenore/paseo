@@ -2277,7 +2277,7 @@ export class Session {
     const promise =
       this.dispatchSubscriptionMessage(msg, source) ??
       this.dispatchVoiceAndControlMessage(msg) ??
-      this.dispatchAgentRewindMessage(msg, source) ??
+      this.dispatchAgentRestoreMessage(msg, source) ??
       this.dispatchAgentRelationshipMessage(msg) ??
       this.dispatchAgentTimelineMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
@@ -2588,11 +2588,14 @@ export class Session {
     }
   }
 
-  private dispatchAgentRewindMessage(
+  private dispatchAgentRestoreMessage(
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "refresh_agent_request":
+      case "agent.reload_idle.request":
+        return this.handleRefreshAgentRequest(msg);
       case "agent.rewind.request":
         return this.handleAgentRewindRequest(msg, source);
       default:
@@ -2700,16 +2703,6 @@ export class Session {
     }
   }
 
-  private dispatchAgentReloadMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    switch (msg.type) {
-      case "refresh_agent_request":
-      case "agent.reload_idle.request":
-        return this.handleRefreshAgentRequest(msg);
-      default:
-        return undefined;
-    }
-  }
-
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_agents_request":
@@ -2749,7 +2742,7 @@ export class Session {
       case "clear_agent_attention":
         return this.handleClearAgentAttention(msg.agentId, msg.requestId);
       default:
-        return this.dispatchAgentReloadMessage(msg);
+        return undefined;
     }
   }
 
