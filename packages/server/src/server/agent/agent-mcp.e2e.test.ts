@@ -89,6 +89,63 @@ async function createMcpClient(url: string, authToken?: string): Promise<McpClie
   return { callTool: boundCallTool, close: () => rawClient.close() };
 }
 
+interface OfflineMcpDaemon {
+  client: McpClient;
+  stop: () => Promise<void>;
+}
+
+async function startOfflineMcpDaemon(): Promise<OfflineMcpDaemon> {
+  const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+  const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+  const port = await getAvailablePort();
+  const daemon = await createPaseoDaemon(
+    {
+      listen: `127.0.0.1:${port}`,
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: true,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+    },
+    pino({ level: "silent" }),
+  );
+  await daemon.start();
+  const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+  return {
+    client,
+    stop: async () => {
+      await client.close();
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+    },
+  };
+}
+
+type WorkspaceCreation = { workspaceId: unknown } | { error: unknown };
+
+async function createLocalWorkspace(client: McpClient, cwd: string): Promise<WorkspaceCreation> {
+  const result = await client.callTool({
+    name: "create_workspace",
+    args: { isolation: "local", path: cwd },
+  });
+  if (result.isError) {
+    const content = result.content?.[0];
+    return { error: content && "text" in content ? content.text : undefined };
+  }
+  return { workspaceId: getStructuredContent(result)?.workspaceId };
+}
+
+async function listWorkspaces(client: McpClient): Promise<WorkspaceCreation[]> {
+  const result = await client.callTool({ name: "list_workspaces", args: {} });
+  const workspaces = getStructuredContent(result)?.workspaces;
+  if (!Array.isArray(workspaces)) return [];
+  return workspaces.map((workspace: StructuredContent) => ({ workspaceId: workspace.workspaceId }));
+}
+
 interface LaunchRecorder {
   recordedLaunches: AgentSessionConfig[];
 }
@@ -236,70 +293,22 @@ describe("agent MCP end-to-end (offline)", () => {
   }, 30_000);
 
   test("create_workspace with local isolation adopts only an existing directory", async () => {
-    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
-    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const daemon = await startOfflineMcpDaemon();
     const root = await mkdtemp(path.join(os.tmpdir(), "paseo-local-workspace-"));
-    const port = await getAvailablePort();
     const missingPath = path.join(root, "does-not-exist");
     const filePath = path.join(root, "regular-file");
     await writeFile(filePath, "not a directory\n", "utf8");
-
-    const daemon = await createPaseoDaemon(
-      {
-        listen: `127.0.0.1:${port}`,
-        paseoHome,
-        corsAllowedOrigins: [],
-        hostnames: true,
-        mcpEnabled: true,
-        staticDir,
-        mcpDebug: false,
-        agentClients: createTestAgentClients(),
-        agentStoragePath: path.join(paseoHome, "agents"),
-      },
-      pino({ level: "silent" }),
-    );
-    await daemon.start();
-    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
-
     try {
-      const missing = await client.callTool({
-        name: "create_workspace",
-        args: { isolation: "local", path: missingPath },
+      expect(await createLocalWorkspace(daemon.client, missingPath)).toEqual({
+        error: expect.stringContaining(`Directory not found: ${missingPath}`),
       });
-      const regularFile = await client.callTool({
-        name: "create_workspace",
-        args: { isolation: "local", path: filePath },
+      expect(await createLocalWorkspace(daemon.client, filePath)).toEqual({
+        error: expect.stringContaining(`Directory not found: ${filePath}`),
       });
-      const directory = await client.callTool({
-        name: "create_workspace",
-        args: { isolation: "local", path: root },
-      });
-      const listed = await client.callTool({ name: "list_workspaces", args: {} });
-
-      expect({
-        missing: missing.isError ?? false,
-        regularFile: regularFile.isError ?? false,
-        directory: directory.isError ?? false,
-      }).toEqual({ missing: true, regularFile: true, directory: false });
-      expect(missing.content).toEqual([
-        expect.objectContaining({
-          text: expect.stringContaining(`Directory not found: ${missingPath}`),
-        }),
-      ]);
-      expect(regularFile.content).toEqual([
-        expect.objectContaining({
-          text: expect.stringContaining(`Directory not found: ${filePath}`),
-        }),
-      ]);
-      const workspaces = getStructuredContent(listed)?.workspaces as Array<{ workspaceId: string }>;
-      expect(workspaces.map((workspace) => workspace.workspaceId)).toEqual([
-        getStructuredContent(directory)?.workspaceId,
-      ]);
+      const created = await createLocalWorkspace(daemon.client, root);
+      expect(await listWorkspaces(daemon.client)).toEqual([created]);
     } finally {
-      await client.close();
       await daemon.stop();
-      await rm(paseoHome, { recursive: true, force: true });
-      await rm(staticDir, { recursive: true, force: true });
       await rm(root, { recursive: true, force: true });
     }
   }, 30_000);
