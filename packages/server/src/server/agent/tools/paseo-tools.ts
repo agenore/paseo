@@ -224,6 +224,20 @@ function assertOptionsAbsent(
   }
 }
 
+async function isExistingDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+    throw error;
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return error.code === "ENOENT" || error.code === "ENOTDIR";
+}
+
 function resolveWorkspaceWorktreeTarget(input: WorkspaceWorktreeOptions): WorkspaceWorktreeTarget {
   switch (input.mode ?? "branch-off") {
     case "branch-off":
@@ -1280,7 +1294,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       let workspace: PersistedWorkspaceRecord;
       if (isolation === "local") {
         const cwd = resolveScopedCwd(path, { required: true });
-        if (!(await stat(cwd).catch(() => null))?.isDirectory()) {
+        if (!(await isExistingDirectory(cwd))) {
           throw new Error(`Directory not found: ${cwd}`);
         }
         assertOptionsAbsent(
