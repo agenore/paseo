@@ -1,4 +1,5 @@
 import { createServer, type Socket } from "node:net";
+import type { TestInfo } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { addScheduleHostAndReload, createScheduleHost } from "../support/helpers/schedule-host";
@@ -172,6 +173,51 @@ async function createConnectingHost() {
   };
 }
 
+async function openSchedulesWithConnectingHost(
+  page: Page,
+  cleanupTasks: Array<() => Promise<void>>,
+): Promise<void> {
+  const workspace = await seedWorkspace({ repoPrefix: "schedule-partial-hosts-", git: false });
+  cleanupTasks.push(() => workspace.cleanup());
+  const stalledHost = await createConnectingHost();
+  cleanupTasks.push(() => stalledHost.close());
+
+  await gotoAppShell(page);
+  await waitForSidebarHydration(page);
+  await page.goto(buildSchedulesRoute());
+  await addScheduleHostAndReload({
+    page,
+    serverId: "stalled-schedule-host",
+    label: "Connecting host",
+    port: stalledHost.port,
+  });
+}
+
+async function expectPartialEmptySchedules(page: Page): Promise<void> {
+  await expect(page.getByTestId("schedules-empty")).toBeVisible();
+  await expect(page.getByTestId("schedules-host-errors")).toContainText("Connecting host");
+  await expect(page.getByTestId("schedules-empty-new")).toBeVisible();
+}
+
+async function expectScheduleCreationAvailable(page: Page): Promise<void> {
+  await openNewScheduleSheet(page);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByTestId("schedule-form-sheet")).toHaveCount(0);
+}
+
+async function capturePartialSchedulesLayouts(page: Page, testInfo: TestInfo): Promise<void> {
+  await testInfo.attach("empty-schedules-web-wide", {
+    body: await page.screenshot({ path: testInfo.outputPath("empty-schedules-web-wide.png") }),
+    contentType: "image/png",
+  });
+  await page.setViewportSize(MOBILE_SHEET_VIEWPORT);
+  await expect(page.getByTestId("schedules-empty-new")).toBeVisible();
+  await testInfo.attach("empty-schedules-mobile-web", {
+    body: await page.screenshot({ path: testInfo.outputPath("empty-schedules-mobile-web.png") }),
+    contentType: "image/png",
+  });
+}
+
 test.describe("Schedules project target", () => {
   const cleanupTasks: Array<() => Promise<void>> = [];
 
@@ -185,36 +231,10 @@ test.describe("Schedules project target", () => {
   test("shows empty schedules while another host is still connecting", async ({
     page,
   }, testInfo) => {
-    const workspace = await seedWorkspace({ repoPrefix: "schedule-partial-hosts-", git: false });
-    cleanupTasks.push(() => workspace.cleanup());
-    const stalledHost = await createConnectingHost();
-    cleanupTasks.push(() => stalledHost.close());
-
-    await gotoAppShell(page);
-    await waitForSidebarHydration(page);
-    await page.goto(buildSchedulesRoute());
-    await addScheduleHostAndReload({
-      page,
-      serverId: "stalled-schedule-host",
-      label: "Connecting host",
-      port: stalledHost.port,
-    });
-    await expect(page.getByTestId("schedules-empty")).toBeVisible();
-    await expect(page.getByTestId("schedules-host-errors")).toContainText("Connecting host");
-    await expect(page.getByTestId("schedules-empty-new")).toBeVisible();
-    await testInfo.attach("empty-schedules-web-wide", {
-      body: await page.screenshot({ path: testInfo.outputPath("empty-schedules-web-wide.png") }),
-      contentType: "image/png",
-    });
-    await openNewScheduleSheet(page);
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(page.getByTestId("schedule-form-sheet")).toHaveCount(0);
-    await page.setViewportSize(MOBILE_SHEET_VIEWPORT);
-    await expect(page.getByTestId("schedules-empty-new")).toBeVisible();
-    await testInfo.attach("empty-schedules-mobile-web", {
-      body: await page.screenshot({ path: testInfo.outputPath("empty-schedules-mobile-web.png") }),
-      contentType: "image/png",
-    });
+    await openSchedulesWithConnectingHost(page, cleanupTasks);
+    await expectPartialEmptySchedules(page);
+    await expectScheduleCreationAvailable(page);
+    await capturePartialSchedulesLayouts(page, testInfo);
   });
 
   test("dismisses the new schedule sheet without reopening", async ({ page }) => {

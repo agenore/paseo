@@ -83,6 +83,7 @@ export async function fetchAggregatedSchedules(
 
   const schedules: AggregatedSchedule[] = [];
   const hostErrors: ScheduleHostError[] = [];
+  const settlingHosts: ScheduleHostInput[] = [];
   let connectedAttempts = 0;
 
   await Promise.all(
@@ -91,6 +92,9 @@ export async function fetchAggregatedSchedules(
       const isOnline = snapshot?.connectionStatus === "online";
       const client = input.runtime.getClient(host.serverId);
       if (!client || !isOnline) {
+        if (isScheduleHostConnectionSettling(snapshot)) {
+          settlingHosts.push(host);
+        }
         return;
       }
       connectedAttempts += 1;
@@ -118,14 +122,12 @@ export async function fetchAggregatedSchedules(
 
   // A connecting host must not hide an empty result from hosts that answered.
   // Keep it visible as a partial-result warning until its connection settles.
-  for (const host of input.hosts) {
-    if (isScheduleHostConnectionSettling(input.runtime.getSnapshot(host.serverId))) {
-      hostErrors.push({
-        serverId: host.serverId,
-        serverName: host.serverName,
-        message: "Still connecting; schedules from this host are not shown yet",
-      });
-    }
+  for (const host of settlingHosts) {
+    hostErrors.push({
+      serverId: host.serverId,
+      serverName: host.serverName,
+      message: "Still connecting; schedules from this host are not shown yet",
+    });
   }
 
   return { status: "loaded", data: schedules, hostErrors };

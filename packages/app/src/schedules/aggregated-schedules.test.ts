@@ -114,6 +114,50 @@ describe("fetchAggregatedSchedules load state", () => {
     });
   });
 
+  it.each([
+    { initial: "connecting", next: "online", includedHosts: [], missingHosts: ["host-b"] },
+    { initial: "online", next: "connecting", includedHosts: ["host-b"], missingHosts: [] },
+  ])(
+    "keeps warnings consistent when a host changes from $initial to $next",
+    async ({ initial, next, includedHosts, missingHosts }) => {
+      const snapshots: Record<string, ScheduleRuntimeSnapshot> = {
+        "host-a": { connectionStatus: "online" },
+        "host-b": { connectionStatus: initial },
+      };
+      const schedule = makeSchedule();
+      const result = await fetchAggregatedSchedules({
+        hosts: [
+          { serverId: "host-a", serverName: "Host A" },
+          { serverId: "host-b", serverName: "Host B" },
+        ],
+        runtime: {
+          getSnapshot: (serverId) => snapshots[serverId],
+          getClient: (serverId) => ({
+            scheduleList: async () => {
+              // Both hosts have been considered before the first response arrives.
+              await Promise.resolve();
+              snapshots["host-b"] = { connectionStatus: next };
+              return {
+                requestId: "transition-request",
+                schedules: serverId === "host-a" ? [] : [schedule],
+                error: null,
+              };
+            },
+          }),
+        },
+      });
+      expect(result).toEqual({
+        status: "loaded",
+        data: includedHosts.map((serverId) => ({ ...schedule, serverId, serverName: "Host B" })),
+        hostErrors: missingHosts.map((serverId) => ({
+          serverId,
+          serverName: "Host B",
+          message: "Still connecting; schedules from this host are not shown yet",
+        })),
+      });
+    },
+  );
+
   it("keeps the error state when the only connected host fails", async () => {
     await expect(
       fetchAggregatedSchedules({
