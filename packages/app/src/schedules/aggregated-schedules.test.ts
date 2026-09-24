@@ -1,6 +1,7 @@
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { describe, expect, it } from "vitest";
 import {
+  ALL_SCHEDULE_HOSTS_FAILED_MESSAGE,
   fetchAggregatedSchedules,
   type ScheduleRuntime,
   type ScheduleRuntimeSnapshot,
@@ -111,6 +112,32 @@ describe("fetchAggregatedSchedules load state", () => {
         },
       ],
     });
+  });
+
+  it("keeps the error state when the only connected host fails", async () => {
+    await expect(
+      fetchAggregatedSchedules({
+        hosts: [
+          { serverId: "host-a", serverName: "Host A" },
+          { serverId: "host-b", serverName: "Host B" },
+        ],
+        runtime: {
+          getSnapshot: (serverId) => ({
+            connectionStatus: serverId === "host-a" ? "online" : "connecting",
+          }),
+          getClient: (serverId) =>
+            serverId === "host-a"
+              ? {
+                  scheduleList: async () => ({
+                    requestId: "failed-request",
+                    schedules: [],
+                    error: "Schedule storage unavailable",
+                  }),
+                }
+              : null,
+        },
+      }),
+    ).rejects.toThrow(ALL_SCHEDULE_HOSTS_FAILED_MESSAGE);
   });
 
   it("loads reachable host data when another known host is still connecting", async () => {
