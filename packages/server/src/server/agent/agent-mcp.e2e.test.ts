@@ -235,6 +235,65 @@ describe("agent MCP end-to-end (offline)", () => {
     }
   }, 30_000);
 
+  test("create_workspace with local isolation adopts only an existing directory", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "paseo-local-workspace-"));
+    const port = await getAvailablePort();
+    const missingPath = path.join(root, "does-not-exist");
+    const filePath = path.join(root, "regular-file");
+    await writeFile(filePath, "not a directory\n", "utf8");
+
+    const daemon = await createPaseoDaemon(
+      {
+        listen: `127.0.0.1:${port}`,
+        paseoHome,
+        corsAllowedOrigins: [],
+        hostnames: true,
+        mcpEnabled: true,
+        staticDir,
+        mcpDebug: false,
+        agentClients: createTestAgentClients(),
+        agentStoragePath: path.join(paseoHome, "agents"),
+      },
+      pino({ level: "silent" }),
+    );
+    await daemon.start();
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+
+    try {
+      const missing = await client.callTool({
+        name: "create_workspace",
+        args: { isolation: "local", path: missingPath },
+      });
+      const regularFile = await client.callTool({
+        name: "create_workspace",
+        args: { isolation: "local", path: filePath },
+      });
+      const directory = await client.callTool({
+        name: "create_workspace",
+        args: { isolation: "local", path: root },
+      });
+      const listed = await client.callTool({ name: "list_workspaces", args: {} });
+
+      expect({
+        missing: missing.isError ?? false,
+        regularFile: regularFile.isError ?? false,
+        directory: directory.isError ?? false,
+      }).toEqual({ missing: true, regularFile: true, directory: false });
+      expect(JSON.stringify(missing.content)).toContain(`Directory not found: ${missingPath}`);
+      expect(JSON.stringify(regularFile.content)).toContain(`Directory not found: ${filePath}`);
+      const workspaces = getStructuredContent(listed)?.workspaces as Array<{ cwd: string }>;
+      expect(workspaces.map((workspace) => workspace.cwd)).toEqual([root]);
+    } finally {
+      await client.close();
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   test("password-protected daemon authorizes the agent MCP via the capability token", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));

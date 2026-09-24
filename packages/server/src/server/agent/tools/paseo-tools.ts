@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { ensureValidJson } from "../../json-utils.js";
 import type { Logger } from "pino";
@@ -1225,7 +1226,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         path: z
           .string()
           .optional()
-          .describe("Local directory or source checkout. Defaults to your current workspace."),
+          .describe(
+            "Local directory or source checkout. Defaults to your current workspace. Local isolation adopts an existing directory and never creates one.",
+          ),
         projectId: z.string().optional().describe("Existing project id to own the workspace."),
         title: z.string().trim().min(1).optional(),
         mode: z
@@ -1277,6 +1280,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       let workspace: PersistedWorkspaceRecord;
       if (isolation === "local") {
         const cwd = resolveScopedCwd(path, { required: true });
+        if (!(await stat(cwd).catch(() => null))?.isDirectory()) {
+          throw new Error(`Directory not found: ${cwd}`);
+        }
         assertOptionsAbsent(
           [
             ["mode", mode],
