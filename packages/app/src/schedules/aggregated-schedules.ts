@@ -116,8 +116,16 @@ export async function fetchAggregatedSchedules(
     throw new Error(ALL_SCHEDULE_HOSTS_FAILED_MESSAGE);
   }
 
-  if (schedules.length === 0 && hasSettlingHost) {
-    return { status: "connecting" };
+  // A connecting host must not hide an empty result from hosts that answered.
+  // Keep it visible as a partial-result warning until its connection settles.
+  for (const host of input.hosts) {
+    if (isScheduleHostConnectionSettling(input.runtime.getSnapshot(host.serverId))) {
+      hostErrors.push({
+        serverId: host.serverId,
+        serverName: host.serverName,
+        message: "Still connecting; schedules from this host are not shown yet",
+      });
+    }
   }
 
   return { status: "loaded", data: schedules, hostErrors };

@@ -83,7 +83,7 @@ describe("fetchAggregatedSchedules load state", () => {
     expect(result).toEqual({ status: "loaded", data: [], hostErrors: [] });
   });
 
-  it("does not report loaded empty while another known host is still connecting", async () => {
+  it("shows the empty result with a warning while another host is connecting", async () => {
     const result = await fetchAggregatedSchedules({
       hosts: [
         { serverId: "host-a", serverName: "Host A" },
@@ -100,7 +100,17 @@ describe("fetchAggregatedSchedules load state", () => {
       }),
     });
 
-    expect(result).toEqual({ status: "connecting" });
+    expect(result).toEqual({
+      status: "loaded",
+      data: [],
+      hostErrors: [
+        {
+          serverId: "host-b",
+          serverName: "Host B",
+          message: "Still connecting; schedules from this host are not shown yet",
+        },
+      ],
+    });
   });
 
   it("loads reachable host data when another known host is still connecting", async () => {
@@ -124,7 +134,13 @@ describe("fetchAggregatedSchedules load state", () => {
     expect(result).toEqual({
       status: "loaded",
       data: [{ ...schedule, serverId: "host-a", serverName: "Host A" }],
-      hostErrors: [],
+      hostErrors: [
+        {
+          serverId: "host-b",
+          serverName: "Host B",
+          message: "Still connecting; schedules from this host are not shown yet",
+        },
+      ],
     });
   });
 });
