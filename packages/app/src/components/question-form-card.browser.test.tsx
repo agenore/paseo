@@ -1,9 +1,14 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { within } from "@testing-library/dom";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n as testI18n } from "@/i18n/i18next";
 import type { PendingPermission } from "@/types/shared";
 import { QuestionFormCard } from "./question-form-card";
+
+// Load translations so controls expose their real accessible names.
+void testI18n;
 
 // App sources compile against the classic JSX runtime, which expects React on the global.
 beforeEach(() => vi.stubGlobal("React", React));
@@ -58,17 +63,11 @@ function mountCard(question: Record<string, unknown>) {
   );
   mounted.push({ root, container });
 
-  const option = (label: string): HTMLElement => {
-    const element = container.querySelector(`[aria-label="${label}"]`);
-    if (!(element instanceof HTMLElement)) throw new Error(`option ${label} did not render`);
-    return element;
-  };
-  const otherInput = (): HTMLInputElement => {
-    const element = container.querySelector("input");
-    if (!(element instanceof HTMLInputElement)) throw new Error("other input did not render");
-    return element;
-  };
-  const check = (label: string) => act(() => option(label).click());
+  const view = within(container);
+  const optionRole = question.multiSelect ? "checkbox" : "radio";
+  const otherInput = () =>
+    view.getByRole<HTMLInputElement>("textbox", { name: String(question.question) });
+  const check = (label: string) => act(() => view.getByRole(optionRole, { name: label }).click());
   const type = (text: string) => {
     const input = otherInput();
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -78,11 +77,7 @@ function mountCard(question: Record<string, unknown>) {
       input.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
     });
   };
-  const submit = () => {
-    const element = container.querySelector('[data-testid="question-form-primary-action"]');
-    if (!(element instanceof HTMLElement)) throw new Error("primary action did not render");
-    act(() => element.click());
-  };
+  const submit = () => act(() => view.getByRole("button", { name: "Submit" }).click());
   const submittedAnswers = (): Record<string, string> => {
     const response = onRespond.mock.calls[0]?.[0];
     if (!response || response.behavior !== "allow") throw new Error("card did not submit");
